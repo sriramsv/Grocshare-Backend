@@ -23,7 +23,7 @@ import random
 import string
 
 from flask import Flask
-from flask import make_response
+from flask import make_response,Response
 from flask import render_template
 from flask import request
 
@@ -32,9 +32,8 @@ import oauth2client.client
 from oauth2client.crypt import AppIdentityError
 from oauth2client.client import verify_id_token
 
-APPLICATION_NAME = 'Google+ Python Token Verification'
 
-
+APPLICATION_NAME = 'Grocshare'
 app = Flask(__name__)
 app.secret_key = ''.join(random.choice(string.ascii_uppercase + string.digits)
                          for x in range(32))
@@ -43,7 +42,7 @@ app.secret_key = ''.join(random.choice(string.ascii_uppercase + string.digits)
 # Update client_secrets.json with your Google API project information.
 # Do not change this assignment.
 CLIENT_ID = json.loads(
-    open('client_secrets.json', 'r').read())['web']['client_id']
+    open('client_secrets.json', 'r').read())['web']['client_id']  
 
 
 @app.route('/', methods=['GET'])
@@ -58,59 +57,32 @@ def index():
   return response
 
 
-@app.route('/verify', methods=['POST'])
+@app.route('/auth',methods=['GET'])
+def get():
+  return 'auth page'
+
+@app.route('/auth', methods=['POST'])
 def verify():
   """Verify an ID Token or an Access Token."""
-
-  id_token = request.args.get('id_token', None)
-  access_token = request.args.get('access_token', None)
-
+  id_token = request.form.get('id_token')
+  access_token = request.form.get('access_token', None)
   token_status = {}
-
   id_status = {}
+  valid=""
   if id_token is not None:
     # Check that the ID Token is valid.
     try:
       # Client library can verify the ID token.
       jwt = verify_id_token(id_token, CLIENT_ID)
-      id_status['valid'] = True
-      id_status['gplus_id'] = jwt['sub']
-      id_status['message'] = 'ID Token is valid.'
+      valid="True"
     except AppIdentityError:
-      id_status['valid'] = False
-      id_status['gplus_id'] = None
-      id_status['message'] = 'Invalid ID Token.'
+      valid="False"
     token_status['id_token_status'] = id_status
 
-  access_status = {}
-  if access_token is not None:
-    # Check that the Access Token is valid.
-    url = ('https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=%s'
-           % access_token)
-    h = httplib2.Http()
-    result = json.loads(h.request(url, 'GET')[1].decode('utf-8'))
-    if result.get('error') is not None:
-      # This is not a valid token.
-      access_status['valid'] = False
-      access_status['gplus_id'] = None
-      access_status['message'] = 'Invalid Access Token.'
-    elif result['issued_to'] != CLIENT_ID:
-      # This is not meant for this app. It is VERY important to check
-      # the client ID in order to prevent man-in-the-middle attacks.
-      access_status['valid'] = False
-      access_status['gplus_id'] = None
-      access_status['message'] = 'Access Token not meant for this app.'
-    else:
-      access_status['valid'] = True
-      access_status['gplus_id'] = result['user_id']
-      access_status['message'] = 'Access Token is valid.'
-    token_status['access_token_status'] = access_status
-
-  response = make_response(json.dumps(token_status, 200))
-  response.headers['Content-Type'] = 'application/json'
-  return response
+  resp = Response(valid, status=200, mimetype='text/plain')
+  return resp
 
 
 if __name__ == '__main__':
   app.debug = True
-  app.run(host='0.0.0.0', port=4567)
+  app.run(host='0.0.0.0', port=80)
