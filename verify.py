@@ -26,34 +26,91 @@ from collections import defaultdict
 from blinker import signal
 from flask import Flask
 from flask import make_response,Response
-from flask import render_template
+from flask import render_template,flash
 from flask import request,session,g
 import httplib2
 import oauth2client.client
 from oauth2client.crypt import AppIdentityError
 from oauth2client.client import verify_id_token
 import MySQLdb
+from gcm import *
 from orderclass import Order,OrderWrapper,jdefault,JsonLoad
-import mail
-
+from google.appengine.api import mail
+import jinja2
+import requests
 APPLICATION_NAME = 'Grocshare'
 app = Flask(__name__)
 app.secret_key = ''.join(random.choice(string.ascii_uppercase + string.digits)
 						 for x in range(32))
 
 
+JINJA_ENVIRONMENT = jinja2.Environment(
+    loader=jinja2.FileSystemLoader('templates'),
+    extensions=['jinja2.ext.autoescape'],
+    autoescape=True)
+
 # Update client_secrets.json with your Google API project information.
 # Do not change this assignment.
 CLIENT_ID = json.loads(
 	open('client_secrets.json', 'r').read())['web']['client_id']
 INSTANCE_NAME="grocshare-0408:grocshare-db"
-
+API_KEY = json.loads(open('gcm_id.json', 'r').read())['api_key']
 
 # Start the scheduler
 
 send_data = signal('addorder')
 check = signal('checkorder')
 
+def sendmergedorder(mergelist=None,total=0):
+    # send_email("vendor",mergelist)
+    for items in mergelist:
+        send_email("user",items)
+        userid=items['userid']
+        send_gcm(userid=userid,message="your order has been completed")
+
+def send_email(whom,order):
+    db=get_request_connection()
+    cur=db.cursor()
+    if whom=="user":
+        print order
+        userid=order['userid']
+        # print order
+        items=order['items']
+        d1={"items":items}
+        query="""select username,email from userlist where userid={};""".format(userid)
+        cur.execute(query);
+        d = cur.fetchone()
+        username=d[0]
+        email=d[1]
+        d1['username']=username
+        template = JINJA_ENVIRONMENT.get_template('userorder.html')
+        subject="Grocshare Order Details"
+        message = mail.EmailMessage(sender="Grocshare New Order Confirmation <sharegroc@gmail.com>",subject=subject)
+        message.to = email
+        message.html=template.render(d1)
+        message.send()
+
+    # elif whom=="vendor":
+    #     email="sriramsv1991@gmail.com"
+    #     subject="Grocshare Order Details"
+    #     message = mail.EmailMessage(sender="Grocshare New Order Confirmation <sharegroc@gmail.com>",subject=subject)
+    #     # template = JINJA_ENVIRONMENT.get_template('vendor.html')
+    #     message.to = email
+    #     a=OrderedDict()
+    #     for o in order:
+    #         d=OrderedDict()
+    #         query="select username,email from userlist where userid={};".format(o['userid'])
+    #         cur.execute(query)
+    #         d['orders'].append(order['items'])
+    #         l=cur.fetchone()
+    #         d['username']=l[0]
+    #         d['email']=l[1]
+    #         d['items']=o['items']
+    #         a['orders'].append(d)
+    #     print a
+    #     # html=template.render(a)
+    #     # message.html = html
+    #     message.send()
 
 def request_has_connection():
 	return hasattr(g, 'db')
@@ -129,9 +186,10 @@ def verify():
 @app.route('/addorder',methods=['POST'])
 def addorder():
     orderslist=json.loads(request.data)
-    userid=orderslist['userid']
+    userid=orderslist['userID']
     thisorder=OrderWrapper(userid)
     totalcost=orderslist['total']
+
     for o in orderslist['items']:
         orderitem=Order(o['item'],o['qty'],o['cost'])
         orderitemjson=json.dumps(orderitem,default=jdefault)
@@ -139,61 +197,108 @@ def addorder():
 
     db=get_request_connection()
     cursor=db.cursor()
-    cursor.execute("insert into orders(userid,status,orderObject,totalcost) values(%s,%s,%s,%s);",(userid,1,json.dumps(thisorder,default=jdefault),totalcost))
+    if totalcost>=25:
+        cursor.execute("insert into orders(userid,status,orderObject,totalcost) values(%s,%s,%s,%s);",(userid,"completed",json.dumps(thisorder,default=jdefault),totalcost))
+        send_email('user',thisorder.__dict__)
+        send_gcm(userid=userid,message="your order has been completed")
+    else:
+        cursor.execute("insert into orders(userid,status,orderObject,totalcost) values(%s,%s,%s,%s);",(userid,"pending",json.dumps(thisorder,default=jdefault),totalcost))
     db.commit()
     result = send_data.send('add',abc=123)
     return Response(status=200)
 
 @app.route('/history/<userid>',methods=['GET'])
 def history(userid):
-	db=get_request_connection()
-	cursor=db.cursor()
-	status=""
-	query='select * from orders where userid={}'.format(userid)
-	cursor.execute(query)
-	count=1
-	orderlist=defaultdict(list)
-	rows=cursor.fetchall()
-	if len(rows)<1:
-		return Response(json.dumps({"status":"invalid user id"}),status=200)
-	for r in rows:
-		g=OrderedDict()
-		g["orderid"]=count
-		g["items"]=eval(r[4])['items']
-		g["status"]=r[3]
-		count+=1
-		orderlist["orders"].append(g)
-	orderlist["userid"]=userid
-	return Response(json.dumps(orderlist,indent=4),status=200,mimetype='application/json')
+    db=get_request_connection()
+    cursor=db.cursor()
+    status=""
+    query='select * from orders where userid={}'.format(userid)
+    cursor.execute(query)
+    count=1
+    orderlist=defaultdict(list)
+    rows=cursor.fetchall()
+    if len(rows)<1:
+        return Response(json.dumps({"status":"invalid user id"}),status=200)
+    for r in rows:
+        g=OrderedDict()
+        g["orderid"]=count
+        g["items"]=eval(r[4])['items']
+        g["status"]=r[3]
+        g["total"]=float(r[5])
+        count+=1
+    orderlist["orders"].append(g)
+    orderlist["userid"]=userid
+    return Response(json.dumps(orderlist,indent=4),status=200,mimetype='application/json')
 
 
+
+
+@app.route('/checkemail',methods=['GET'])
+def checkemail():
+    return Response(status=200)
 
 @app.route('/checkorder',methods=['GET'])
 def checkorder():
-    check.send('add',abc=123)
-    return Response(status=200)
+    res=check.send('add',abc=123)
+    return Response(json.dumps({"status":res[0][1]}),status=200)
 
 @check.connect
 @send_data.connect
 def receive_data(sender, **kw):
     db=get_request_connection()
     cur=db.cursor()
-    cur.execute("select orderid,userid,time,totalcost,orderObject from orders where status=1;")
+    cur.execute("select orderid,userid,time,totalcost,orderObject from orders where status='pending';")
     l=cur.fetchall()
-    k=[]
-    if l<0:
+    print len(l)
+    if len(l)<1:
         return "No pending orders"
     total=0
-    k=OrderedDict()
+    k=[]
+    orders=[]
     for i,r in enumerate(l):
-        total+=int(r[3])
-        g=OrderedDict()
-        g['orderid']=int(r[0])
-        g['items'].append(eval(r[4]))
+        total=total+float(r[3])
+        orders.append(int(r[0]))
+        k.append(json.loads(r[4]))
         if total>=25:
+            sendmergedorder(k,total)
+            changestatus(orders)
             break
-        print json.dumps(g)    
-    print total
+
+
+
+def changestatus(orders):
+    for o in orders:
+        db=get_request_connection()
+        cur=db.cursor()
+        query="""update orders set status='completed' where orderid={} and status='pending';""".format(o)
+        cur.execute(query)
+        db.commit()
+
+@app.route('/gcmregister',methods=['POST'])
+def gcmregister():
+    data=json.loads(request.data)
+    print data
+    reg_id = data['regID']
+    userid = data['userID']
+    db=get_request_connection()
+    cur=db.cursor()
+    query="""update userlist set regID='{}' where userid={};""".format(reg_id,userid)
+    cur.execute(query)
+    db.commit()
+    return "registration successful",200
+
+
+
+def send_gcm(userid,message):
+    gcm = GCM(API_KEY)
+    db=get_request_connection()
+    cursor=db.cursor()
+    l=cursor.execute("""select regID from userlist where userid={};""".format(userid))
+    reg_id=cursor.fetchone()
+    data = {'message':message}
+    gcm.plaintext_request(registration_id=reg_id, data=data)
+
+
 
 if __name__ == '__main__':
   app.debug = True

@@ -1,0 +1,27 @@
+<html>
+<body>
+  <P>
+    Hi {{username}},
+
+    Your following item has been ordered:
+  </P>
+  <table width="300" style="border:1px solid #333">
+      <tr>
+          <TH>Item</TH>
+          <TD>{{" "}}</TD>
+          <TH>Quantity</TH>
+          <TD>{{" "}}</TD>
+          <TH>Cost</TH>
+      </tr>
+      {% for item in items %}
+    <tr>
+          <TD>{{item.item}}</TD>
+          <TD>{{" "}}</TD>
+          <TD>{{item.qty}}</TD>
+          <TD>{{" "}}</TD>
+          <TD>{{item.cost}}</TD>
+      </tr>
+      {% endfor %}
+  </table>
+</body>
+</html>

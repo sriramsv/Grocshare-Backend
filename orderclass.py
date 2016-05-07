@@ -25,7 +25,7 @@ class Order:
 	def getqty(self):
 		return self.qty
 
-	
+
 
 class OrderWrapper:
 	def __init__(self,userid):
@@ -35,7 +35,4 @@ class OrderWrapper:
 		self.items.append(order)
 
 	def getorders(self):
-		return self.items	
-
-
-
+		return self.items
