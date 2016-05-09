@@ -2,7 +2,7 @@
 <body>
   <P>
     Hi {{username}},
-
+    <br />
     Your following item has been ordered:
   </P>
   <table width="300" style="border:1px solid #333">
@@ -20,8 +20,13 @@
           <TD>{{item.qty}}</TD>
           <TD>{{" "}}</TD>
           <TD>{{item.cost}}</TD>
+          <TD>{{" "}}</TD>
+
       </tr>
       {% endfor %}
+      <tr>
+        Total:{{total}}
+      </tr>
   </table>
 </body>
 </html>

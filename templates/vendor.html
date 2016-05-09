@@ -1,7 +1,18 @@
 <html>
 <body>
-{% for order in orders % }
+  <P>
+    Hi Sriram,
+    <br />
+    There are New Orders for you:
+  </P>
+  {% for o in orders %}
   <table width="300" style="border:1px solid #333">
+    <tr>
+      Customer Name:{{o.username}}
+    </tr>
+    <tr>
+      Email:{{o.email}}
+    </tr>
       <tr>
           <TH>Item</TH>
           <TD>{{" "}}</TD>
@@ -9,16 +20,20 @@
           <TD>{{" "}}</TD>
           <TH>Cost</TH>
       </tr>
-      {% for item in items %}
+      {% for item in o["items"] %}
     <tr>
           <TD>{{item.item}}</TD>
           <TD>{{" "}}</TD>
           <TD>{{item.qty}}</TD>
           <TD>{{" "}}</TD>
           <TD>{{item.cost}}</TD>
+
       </tr>
       {% endfor %}
+        <tr>
+          Total:{{o.total}}
+        </tr>
   </table>
-{% endfor %}
+  {% endfor %}
 </body>
 </html>

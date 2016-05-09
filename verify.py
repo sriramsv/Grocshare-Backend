@@ -1,19 +1,5 @@
-#!/usr/bin/python
-# Copyright 2013 Google Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
 
+#!/usr/bin/python
 from collections import OrderedDict
 try:
     import cPickle as pickle
@@ -38,6 +24,10 @@ from orderclass import Order,OrderWrapper,jdefault,JsonLoad
 from google.appengine.api import mail
 import jinja2
 import requests
+
+import urllib3
+urllib3.disable_warnings()
+
 APPLICATION_NAME = 'Grocshare'
 app = Flask(__name__)
 app.secret_key = ''.join(random.choice(string.ascii_uppercase + string.digits)
@@ -62,55 +52,66 @@ send_data = signal('addorder')
 check = signal('checkorder')
 
 def sendmergedorder(mergelist=None,total=0):
-    # send_email("vendor",mergelist)
     for items in mergelist:
-        send_email("user",items)
+        send_user_email(items)
         userid=items['userid']
-        send_gcm(userid=userid,message="your order has been completed")
+        send_gcm(userid=userid,message="Your order has been sent to the vendor")
+    send_vendor_email(mergelist)
 
-def send_email(whom,order):
+
+def totalcost(o):
+    total=0
+    print o['items']
+    for i in o['items']:
+        total=total+i["cost"]
+    print total
+    return total
+
+def send_user_email(order):
     db=get_request_connection()
     cur=db.cursor()
-    if whom=="user":
-        print order
-        userid=order['userid']
-        # print order
-        items=order['items']
-        d1={"items":items}
-        query="""select username,email from userlist where userid={};""".format(userid)
-        cur.execute(query);
-        d = cur.fetchone()
-        username=d[0]
-        email=d[1]
-        d1['username']=username
-        template = JINJA_ENVIRONMENT.get_template('userorder.html')
+    userid=order['userid']
+    items=order['items']
+    d1={"items":items}
+    query="""select username,email from userlist where userid={};""".format(userid)
+    cur.execute(query);
+    d = cur.fetchone()
+    username=d[0]
+    email=d[1]
+    d1['username']=username
+    d1['total']=totalcost(order)
+    template = JINJA_ENVIRONMENT.get_template('userorder.html')
+    subject="Grocshare Order Details"
+    message = mail.EmailMessage(sender="Grocshare New Order Confirmation <sharegroc@gmail.com>",subject=subject)
+    message.to = email
+    message.html=template.render(d1)
+    message.send()
+
+
+
+def send_vendor_email(mergelist=None):
+        db=get_request_connection()
+        cur=db.cursor()
+        order=defaultdict(list)
+        email="sriramsv1991@gmail.com"
         subject="Grocshare Order Details"
-        message = mail.EmailMessage(sender="Grocshare New Order Confirmation <sharegroc@gmail.com>",subject=subject)
+        for m in mergelist:
+            g={}
+            query="""select username,email from userlist where userid={};""".format(m['userid'])
+            cur.execute(query);
+            d = cur.fetchone()
+            g["username"]=d[0]
+            g["email"]=d[1]
+            g["items"]=m["items"]
+            g["total"]=totalcost(m)
+            order["orders"].append(g)
+        # print json.dumps(order)
+        message = mail.EmailMessage(sender="Grocshare Orders <sharegroc@gmail.com>",subject=subject)
+        template = JINJA_ENVIRONMENT.get_template('vendor.html')
         message.to = email
-        message.html=template.render(d1)
+        message.html=template.render(order)
         message.send()
 
-    # elif whom=="vendor":
-    #     email="sriramsv1991@gmail.com"
-    #     subject="Grocshare Order Details"
-    #     message = mail.EmailMessage(sender="Grocshare New Order Confirmation <sharegroc@gmail.com>",subject=subject)
-    #     # template = JINJA_ENVIRONMENT.get_template('vendor.html')
-    #     message.to = email
-    #     a=OrderedDict()
-    #     for o in order:
-    #         d=OrderedDict()
-    #         query="select username,email from userlist where userid={};".format(o['userid'])
-    #         cur.execute(query)
-    #         d['orders'].append(order['items'])
-    #         l=cur.fetchone()
-    #         d['username']=l[0]
-    #         d['email']=l[1]
-    #         d['items']=o['items']
-    #         a['orders'].append(d)
-    #     print a
-    #     # html=template.render(a)
-    #     # message.html = html
-    #     message.send()
 
 def request_has_connection():
 	return hasattr(g, 'db')
@@ -197,13 +198,9 @@ def addorder():
 
     db=get_request_connection()
     cursor=db.cursor()
-    if totalcost>=25:
-        cursor.execute("insert into orders(userid,status,orderObject,totalcost) values(%s,%s,%s,%s);",(userid,"completed",json.dumps(thisorder,default=jdefault),totalcost))
-        send_email('user',thisorder.__dict__)
-        send_gcm(userid=userid,message="your order has been completed")
-    else:
-        cursor.execute("insert into orders(userid,status,orderObject,totalcost) values(%s,%s,%s,%s);",(userid,"pending",json.dumps(thisorder,default=jdefault),totalcost))
+    cursor.execute("insert into orders(userid,status,orderObject,totalcost) values(%s,%s,%s,%s);",(userid,"pending",json.dumps(thisorder,default=jdefault),totalcost))
     db.commit()
+    send_gcm(userid=userid,message="Your order has been submitted")
     result = send_data.send('add',abc=123)
     return Response(status=200)
 
@@ -214,19 +211,17 @@ def history(userid):
     status=""
     query='select * from orders where userid={}'.format(userid)
     cursor.execute(query)
-    count=1
     orderlist=defaultdict(list)
     rows=cursor.fetchall()
     if len(rows)<1:
         return Response(json.dumps({"status":"invalid user id"}),status=200)
     for r in rows:
         g=OrderedDict()
-        g["orderid"]=count
+        g["orderid"]=int(r[0])
         g["items"]=eval(r[4])['items']
         g["status"]=r[3]
         g["total"]=float(r[5])
-        count+=1
-    orderlist["orders"].append(g)
+        orderlist["orders"].append(g)
     orderlist["userid"]=userid
     return Response(json.dumps(orderlist,indent=4),status=200,mimetype='application/json')
 
